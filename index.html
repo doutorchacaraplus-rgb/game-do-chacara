@@ -276,6 +276,7 @@
     let currentChallengeId = null;
     let totalScore = 0; 
     let machineAttackInterval = null;
+    let wakeLock = null;
 
     const phrasesEasy = ["ASDF JKLÇ", "FADA SASA", "LADA KAKA", "SALA DADO"];
     const phrasesMedium = ["O CORAJOSO GUERREIRO AVANCA NA ARENA", "LARA CROFT EXPLORA A TUMBA PERIGOSA", "SUPER MARIO CORRE PARA SALVAR A PRINCESA"];
@@ -295,8 +296,11 @@
     setInterval(updateClock, 1000);
     updateClock();
 
-    // --- SINTETIZADOR DE VOZ HUMANA / BEATBOX FREESTYLE (WEB AUDIO API) ---
+    // --- CONTEXTO DE ÁUDIO WEB AUDIO API ---
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    let musicMode = 0; // 0 = Vocal Freestyle, 1 = Instrumental Remix Beat, 2 = Off
+    let musicTimer = null;
+    let musicStepIndex = 0;
 
     // Síntese Formântica de Voz Humana
     function playVocalSynth(freq, duration, vowelType = 'a') {
@@ -306,21 +310,20 @@
       const osc = audioCtx.createOscillator();
       const gain = audioCtx.createGain();
 
-      // Formantes aproximados para vogais humanas
       const f1 = audioCtx.createBiquadFilter();
       const f2 = audioCtx.createBiquadFilter();
       f1.type = 'bandpass'; f2.type = 'bandpass';
 
       if (vowelType === 'a') {
         f1.frequency.value = 800; f2.frequency.value = 1150;
-      } else { // 'o'
+      } else { 
         f1.frequency.value = 400; f2.frequency.value = 800;
       }
 
-      osc.type = 'sawtooth'; // Onda dente de serra simula cordas vocais humanas
+      osc.type = 'sawtooth';
       osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
 
-      gain.gain.setValueAtTime(0.05, audioCtx.currentTime);
+      gain.gain.setValueAtTime(0.06, audioCtx.currentTime);
       gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
 
       osc.connect(f1); osc.connect(f2);
@@ -331,12 +334,24 @@
       osc.stop(audioCtx.currentTime + duration);
     }
 
-    // Batida de Beatbox / Freestyle Drums
+    // Instrumentos para Remix Beat Instrumental
+    function playBeatSynth(freq, type = 'sine', duration = 0.2) {
+      if (isAudioMuted) return;
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+      gain.gain.setValueAtTime(0.08, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+      osc.connect(gain); gain.connect(audioCtx.destination);
+      osc.start(); osc.stop(audioCtx.currentTime + duration);
+    }
+
     function playBeatboxKick() {
       if (isAudioMuted) return;
       const osc = audioCtx.createOscillator();
       const gain = audioCtx.createGain();
-      osc.frequency.setValueAtTime(120, audioCtx.currentTime);
+      osc.frequency.setValueAtTime(130, audioCtx.currentTime);
       osc.frequency.exponentialRampToValueAtTime(30, audioCtx.currentTime + 0.12);
       gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
       gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.12);
@@ -344,41 +359,69 @@
       osc.start(); osc.stop(audioCtx.currentTime + 0.12);
     }
 
-    // Sequência de Freestyle Vocal Loop
+    // Sequências de Música
     const freestyleSequence = [
       { f: 220.00, d: 0.25, v: 'a' }, { f: 0, d: 0.15 }, { f: 261.63, d: 0.20, v: 'o' },
       { f: 293.66, d: 0.30, v: 'a' }, { f: 0, d: 0.10 }, { f: 220.00, d: 0.20, v: 'a' },
       { f: 329.63, d: 0.35, v: 'o' }, { f: 293.66, d: 0.25, v: 'a' }
     ];
 
-    let musicTimer = null;
-    let freestyleStep = 0;
+    const instrumentalSequence = [
+      { f: 110.00, type: 'triangle', d: 0.2 }, { f: 146.83, type: 'square', d: 0.15 },
+      { f: 164.81, type: 'sawtooth', d: 0.2 }, { f: 110.00, type: 'triangle', d: 0.2 }
+    ];
 
-    function playFreestyleLoop() {
-      if (isAudioMuted) return;
-      
-      const item = freestyleSequence[freestyleStep];
-      if (item.f > 0) {
-        playVocalSynth(item.f, item.d, item.v);
-      }
-      if (freestyleStep % 2 === 0) {
-        playBeatboxKick();
-      }
+    function playMusicLoop() {
+      if (isAudioMuted || musicMode === 2) return;
+      if (audioCtx.state === 'suspended') audioCtx.resume();
 
-      freestyleStep = (freestyleStep + 1) % freestyleSequence.length;
-      musicTimer = setTimeout(playFreestyleLoop, 320);
+      if (musicMode === 0) {
+        // Modo Vocal Freestyle
+        const item = freestyleSequence[musicStepIndex % freestyleSequence.length];
+        if (item.f > 0) playVocalSynth(item.f, item.d, item.v);
+        if (musicStepIndex % 2 === 0) playBeatboxKick();
+        musicStepIndex++;
+        musicTimer = setTimeout(playMusicLoop, 320);
+      } else if (musicMode === 1) {
+        // Modo Instrumental Remix
+        const item = instrumentalSequence[musicStepIndex % instrumentalSequence.length];
+        playBeatSynth(item.f, item.type, item.d);
+        if (musicStepIndex % 2 === 0) playBeatboxKick();
+        musicStepIndex++;
+        musicTimer = setTimeout(playMusicLoop, 240);
+      }
     }
 
     function startMusic() {
       if (musicTimer) clearTimeout(musicTimer);
-      freestyleStep = 0;
-      playFreestyleLoop();
+      musicStepIndex = 0;
+      playMusicLoop();
     }
 
     function stopMusic() {
       if (musicTimer) clearTimeout(musicTimer);
       musicTimer = null;
     }
+
+    // Alternar Troca de Música com o Botão
+    document.getElementById('btn-music').addEventListener('click', () => {
+      musicMode = (musicMode + 1) % 3;
+      const btn = document.getElementById('btn-music');
+
+      if (musicMode === 0) {
+        btn.innerText = "🎤 MÚSICA: VOCAL FREESTYLE";
+        btn.style.background = "#eccc68";
+        startMusic();
+      } else if (musicMode === 1) {
+        btn.innerText = "🥁 MÚSICA: INSTRUMENTAL REMIX";
+        btn.style.background = "#70a1ff";
+        startMusic();
+      } else {
+        btn.innerText = "🔇 MÚSICA: OFF";
+        btn.style.background = "#a4b0be";
+        stopMusic();
+      }
+    });
 
     function playTigerRoar() {
       if (isAudioMuted) return;
@@ -387,7 +430,6 @@
       const bufferSize = audioCtx.sampleRate * 1.5;
       const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
       const data = buffer.getChannelData(0);
-
       for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
 
       const noise = audioCtx.createBufferSource();
@@ -404,21 +446,15 @@
       gain.gain.linearRampToValueAtTime(1.5, audioCtx.currentTime + 0.3);
       gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 1.4);
 
-      noise.connect(filter);
-      filter.connect(gain);
-      gain.connect(audioCtx.destination);
-
-      noise.start();
-      noise.stop(audioCtx.currentTime + 1.4);
+      noise.connect(filter); filter.connect(gain); gain.connect(audioCtx.destination);
+      noise.start(); noise.stop(audioCtx.currentTime + 1.4);
     }
 
     function speakNewChallenger() {
       if ('speechSynthesis' in window) {
         window.speechSynthesis.cancel();
         const msg = new SpeechSynthesisUtterance("Novo adversário, aceitar o desafio");
-        msg.lang = 'pt-BR';
-        msg.rate = 1.0;
-        msg.volume = 1.0;
+        msg.lang = 'pt-BR'; msg.rate = 1.0; msg.volume = 1.0;
         window.speechSynthesis.speak(msg);
       }
     }
@@ -435,8 +471,7 @@
       const noise = audioCtx.createBufferSource();
       noise.buffer = buffer;
       const filter = audioCtx.createBiquadFilter();
-      filter.type = 'bandpass';
-      filter.frequency.value = 1200;
+      filter.type = 'bandpass'; filter.frequency.value = 1200;
 
       const gain = audioCtx.createGain();
       gain.gain.setValueAtTime(0.8, audioCtx.currentTime);
@@ -457,9 +492,42 @@
       document.getElementById('auth-screen').style.display = 'flex';
     });
 
-    document.getElementById('btn-fullscreen').addEventListener('click', () => {
-      if (!document.fullscreenElement) document.documentElement.requestFullscreen();
-      else document.exitFullscreen();
+    // SISTEMA DE TELA CHEIA ESTÁVEL COM PREVENÇÃO DE DESLIGAMENTO DO MONITOR (WAKE LOCK)
+    async function requestWakeLock() {
+      try {
+        if ('wakeLock' in navigator) {
+          wakeLock = await navigator.wakeLock.request('screen');
+        }
+      } catch (err) {
+        console.log("WakeLock não suportado ou negado:", err);
+      }
+    }
+
+    function releaseWakeLock() {
+      if (wakeLock !== null) {
+        wakeLock.release();
+        wakeLock = null;
+      }
+    }
+
+    document.getElementById('btn-fullscreen').addEventListener('click', async () => {
+      try {
+        if (!document.fullscreenElement) {
+          await document.documentElement.requestFullscreen();
+          await requestWakeLock();
+        } else {
+          await document.exitFullscreen();
+          releaseWakeLock();
+        }
+      } catch (e) {
+        console.error("Erro na alternância de Tela Cheia:", e);
+      }
+    });
+
+    document.addEventListener('fullscreenchange', () => {
+      if (!document.fullscreenElement) {
+        releaseWakeLock();
+      }
     });
 
     document.getElementById('reg-avatar').addEventListener('change', (e) => {
@@ -509,7 +577,6 @@
 
       connectedUsers[currentUser.name] = currentUser;
 
-      // DISPARO GLOBAL DE NOVO ENTRANTE PARA TODAS AS ABAS ABERTAS
       const newChallengeId = 'challenge_' + Date.now();
       broadcastSystem.postMessage({ type: 'global_new_player', challenger: currentUser, challengeId: newChallengeId });
       broadcastSystem.postMessage({ type: 'ping_all' });
@@ -518,8 +585,8 @@
       resetGame();
     });
 
-    // --- REDE BROADCAST PARA TODAS AS ABAS ---
-    const broadcastSystem = new BroadcastChannel('chacara_arena_network_v5');
+    // REDE BROADCAST SYNCHRONIZED
+    const broadcastSystem = new BroadcastChannel('chacara_arena_network_v6');
     let connectedUsers = {};
     let scoresDatabase = [];
 
@@ -530,14 +597,12 @@
         connectedUsers[data.challenger.name] = data.challenger;
         updateUserList();
 
-        // EMITE O SOM DO TIGRE E A MENSAGEM DE DESAFIO EM TODAS AS ABAS QUE NÃO FOREM DO PRÓPRIO JOGADOR
         if (currentUser && data.challenger.name !== currentUser.name) {
           triggerChallengerAlert(data.challenger, data.challengeId);
           appendChatMessage("Sistema", `⚡ ${data.challenger.name} entrou na arena!`);
         }
       } 
       else if (data.type === 'challenge_taken') {
-        // SE OUTRA ABA JÁ ACEITOU O DESAFIO, CANCELA O POPUP NAS OUTRAS ABAS
         if (currentChallengeId === data.challengeId) {
           document.getElementById('challenge-popover').style.display = 'none';
           pendingChallenger = null;
@@ -587,7 +652,6 @@
       document.getElementById('challenge-text-name').innerText = `${nameText} entrou! Primeiro a aceitar joga!`;
       document.getElementById('challenge-popover').style.display = 'block';
 
-      // Som de Rugido de Tigre e Voz Sintetizada em Todas as Abas
       playTigerRoar();
       speakNewChallenger();
     }
@@ -600,7 +664,6 @@
     document.getElementById('btn-accept-challenge').addEventListener('click', () => {
       document.getElementById('challenge-popover').style.display = 'none';
       if (pendingChallenger && currentChallengeId) {
-        // AVISA A TODAS AS OUTRAS ABAS QUE ESTE JOGO JÁ FOI ACEITO POR ESTA ABA
         broadcastSystem.postMessage({ 
           type: 'challenge_taken', 
           challengeId: currentChallengeId, 
